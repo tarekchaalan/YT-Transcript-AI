@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
@@ -24,7 +24,7 @@ function parseYouTubeTimeToSeconds(val: string | null): number | null {
   }
 }
 
-export default function WatchRedirectPage() {
+function WatchRedirectInner() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -58,6 +58,14 @@ export default function WatchRedirectPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function WatchRedirectPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-2xl px-4 py-10 text-sm text-white/80">Loading…</div>}>
+      <WatchRedirectInner />
+    </Suspense>
   );
 }
 
