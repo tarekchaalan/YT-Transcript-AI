@@ -1,0 +1,59 @@
+# Root gitignore for yt-ai (frontend + backend)
+
+# OS / Editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Env files / secrets
+.env
+.env.*
+**/.env.local
+**/.envrc
+.python-version
+
+# Python (backend)
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+**/*.egg-info/
+**/.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.cache/
+
+# Virtual environments
+venv/
+.venv/
+**/.venv/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Node / Next.js (frontend)
+**/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+
+# Build artifacts
+dist/
+build/
+
+# Whisper binaries/models (avoid committing large files)
+backend/whisper/*
+!backend/whisper/.gitkeep
+!backend/whisper/README.md
+
+

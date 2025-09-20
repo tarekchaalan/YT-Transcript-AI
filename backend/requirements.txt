@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+yt-dlp
+youtube-transcript-api
+requests
+limits
+httpx
+deepmultilingualpunctuation
+openai>=1.0.0
+yake
+openai-whisper
+python-dotenv
+pytest
+pytest-asyncio
+pytest-mock
+httpx

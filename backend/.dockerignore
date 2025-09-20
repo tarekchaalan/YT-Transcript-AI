@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.cache/
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Tests
+/tests/
+
+# Whisper large files
+whisper/*
+
+# Misc
+*.log
