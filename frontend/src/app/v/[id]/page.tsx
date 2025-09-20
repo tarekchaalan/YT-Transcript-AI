@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useChapterShortcuts } from "./shortcuts";
 
@@ -34,11 +34,11 @@ export default function VideoPage() {
     } catch {}
   }, []);
 
-  function withKey(init?: RequestInit): RequestInit {
+  const withKey = useCallback((init?: RequestInit): RequestInit => {
     const headers = new Headers(init?.headers || {});
     if (apiKey) headers.set("X-OpenAI-Key", apiKey);
     return { ...init, headers };
-  }
+  }, [apiKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +113,7 @@ export default function VideoPage() {
     return () => {
       cancelled = true;
     };
-  }, [id, apiKey]);
+  }, [id, apiKey, withKey]);
 
   useEffect(() => {
     if (t && playerRef.current) {

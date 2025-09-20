@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 function parseYouTubeTimeToSeconds(val: string | null): number | null {
   if (!val) return null;
@@ -48,11 +49,11 @@ export default function WatchRedirectPage() {
       <div className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
         {id ? (
           <div>
-            Redirecting to <a className="underline" href={manualHref}>/v/{id}</a>…
+            Redirecting to <Link className="underline" href={manualHref}>/v/{id}</Link>…
           </div>
         ) : (
           <div>
-            Missing or invalid <code>v</code> parameter. Go back to <a className="underline" href="/">home</a>.
+            Missing or invalid <code>v</code> parameter. Go back to <Link className="underline" href="/">home</Link>.
           </div>
         )}
       </div>
