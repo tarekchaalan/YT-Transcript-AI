@@ -315,7 +315,7 @@ export default function VideoPage() {
             <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
               <h2 className="text-lg font-semibold mb-2">Chat about this video</h2>
               <div className="text-xs text-white/60 mb-3">Grounded to this video&apos;s transcript. {apiKey ? "Using your API key." : "Using shared limits; add your API key for better reliability."}</div>
-              <div className="overflow-y-auto rounded border border-white/10 bg-black/20 p-3 space-y-2 resize-y min-h-[200px]">
+              <div className="overflow-y-auto rounded border border-white/10 bg-black/20 p-3 space-y-2 resize-y h-[100px] min-h-[100px]">
                 {messages.length === 0 ? (
                   <div className="text-sm text-white/50">Ask anything about the content. Example: &quot;Summarize this video into 100 words&quot;.</div>
                 ) : (
