@@ -1,15 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+import ReactMarkdown from "react-markdown";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useChapterShortcuts } from "./shortcuts";
 
 type TranscriptSegment = { start: number; end: number; text: string };
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
-// Load react-markdown only on client to keep bundle light
-const ReactMarkdown: any = dynamic(() => import("react-markdown"), { ssr: false });
+// ReactMarkdown will render assistant responses as Markdown
 
 export default function VideoPage() {
   const { id } = useParams<{ id: string }>();
