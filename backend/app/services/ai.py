@@ -285,8 +285,10 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
     """
     key = _effective_openai_key()
     system = (
-        "You are a helpful assistant. You must answer ONLY based on the provided transcript. "
-        "If the answer cannot be derived from the transcript, say you don't know. Be concise. "
+        "You are a helpful assistant. You MUST answer ONLY using the provided transcript content. "
+        "If the user's request is unrelated to the transcript, you MUST refuse with a brief message like: "
+        "'I can't help with that — your question isn't about this video's content.' "
+        "Do not produce code or instructions unrelated to the transcript. Be concise. "
         "Always format your response as Markdown (use headings, paragraphs, and numbered/bulleted lists)."
     )
     # If no key is available, provide a graceful fallback using QA on last user message.
@@ -295,6 +297,23 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
         if m.get("role") == "user":
             user_prompt = m.get("content", "")
             break
+    # Strict on-topic guard: refuse if the user question appears unrelated to the transcript
+    def _is_on_topic(body: str, question: str) -> bool:
+        try:
+            phrases = set(p.lower() for p in extract_keyphrases(body, 12))
+        except Exception:
+            phrases = set()
+        q = question.lower()
+        if any(p and p in q for p in phrases):
+            return True
+        # fallback: simple overlap on 4+ letter words
+        q_words = set(w for w in re.findall(r"[a-zA-Z]{4,}", q))
+        t_words = set(w for w in re.findall(r"[a-zA-Z]{4,}", body.lower())[:5000])
+        return len(q_words & t_words) >= 2
+
+    if user_prompt and not _is_on_topic(text, user_prompt):
+        return "I can't help with that — your question isn't about this video's content."
+
     if not key:
         return answer(text, user_prompt) if user_prompt else "I don't know."
 
@@ -302,11 +321,8 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=key)
         chat_messages = [{"role": "system", "content": system}]
-        chat_messages.extend(messages[-10:])  # bound history to last 10
-        chat_messages.append({
-            "role": "system",
-            "content": "Transcript (truncated):\n" + text[:max_chars],
-        })
+        chat_messages.append({"role": "system", "content": "Transcript (truncated):\n" + text[:max_chars]})
+        chat_messages.extend(messages[-10:])  # bound history to last 10 (after transcript/system)
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             messages=chat_messages,  # type: ignore[arg-type]

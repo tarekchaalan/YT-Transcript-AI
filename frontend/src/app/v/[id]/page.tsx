@@ -143,10 +143,10 @@ export default function VideoPage() {
     } catch {}
   }, [chatStorageKey]);
 
-  // Persist chat on changes (keep last 100 messages)
+  // Persist chat on changes (keep last 10 messages)
   useEffect(() => {
     try {
-      const toSave = messages.slice(-100);
+      const toSave = messages.slice(-10);
       localStorage.setItem(chatStorageKey, JSON.stringify(toSave));
     } catch {}
   }, [messages, chatStorageKey]);
