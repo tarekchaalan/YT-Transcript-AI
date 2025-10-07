@@ -9,7 +9,6 @@ import yake
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 _override_openai_key: contextvars.ContextVar[str | None] = contextvars.ContextVar("override_openai_key", default=None)
-_override_openai_model: contextvars.ContextVar[str | None] = contextvars.ContextVar("override_openai_model", default=None)
 
 _openai_client = None
 if OPENAI_API_KEY:
@@ -24,10 +23,6 @@ if OPENAI_API_KEY:
 def _effective_openai_key() -> Optional[str]:
     override = _override_openai_key.get()
     return override or OPENAI_API_KEY
-def _effective_openai_model() -> str:
-    override_model = _override_openai_model.get()
-    return override_model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-
 
 
 def _call_openai(prompt: str, system: str = "You are a helpful assistant.") -> Optional[str]:
@@ -39,7 +34,7 @@ def _call_openai(prompt: str, system: str = "You are a helpful assistant.") -> O
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=key)
         resp = client.chat.completions.create(
-            model=_effective_openai_model(),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
@@ -62,21 +57,6 @@ def override_openai_key_for_request(key: Optional[str]):
             yield
         finally:
             _override_openai_key.reset(token)
-
-    return _ctx()
-
-
-def override_openai_model_for_request(model: Optional[str]):
-    """Context manager to apply per-request model override safely."""
-    import contextlib
-
-    @contextlib.contextmanager
-    def _ctx():
-        token = _override_openai_model.set(model)
-        try:
-            yield
-        finally:
-            _override_openai_model.reset(token)
 
     return _ctx()
 

@@ -22,7 +22,6 @@ export default function VideoPage() {
   const [entities, setEntities] = useState<string[]>([]);
   const [entitiesByType, setEntitiesByType] = useState<{ people: string[]; organizations: string[]; products: string[] } | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
-  const [model, setModel] = useState<string>("gpt-4o-mini-2024-07-18");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState<string>("");
   const [sending, setSending] = useState<boolean>(false);
@@ -35,13 +34,6 @@ export default function VideoPage() {
   const playerRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const withKey = useCallback((init?: RequestInit): RequestInit => {
-    const headers = new Headers(init?.headers || {});
-    if (apiKey) headers.set("X-OpenAI-Key", apiKey);
-    if (model) headers.set("X-OpenAI-Model", model);
-    return { ...init, headers };
-  }, [apiKey, model]);
-
   useEffect(() => {
     // Load saved API key if present
     try {
@@ -50,18 +42,11 @@ export default function VideoPage() {
     } catch {}
   }, []);
 
-  // Load saved model
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("ytai_openai_model") || "";
-      if (saved) setModel(saved);
-    } catch {}
-  }, []);
-
-  // Persist model
-  useEffect(() => {
-    try { localStorage.setItem("ytai_openai_model", model); } catch {}
-  }, [model]);
+  const withKey = useCallback((init?: RequestInit): RequestInit => {
+    const headers = new Headers(init?.headers || {});
+    if (apiKey) headers.set("X-OpenAI-Key", apiKey);
+    return { ...init, headers };
+  }, [apiKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,21 +313,7 @@ export default function VideoPage() {
             </section>
 
             <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-lg font-semibold">Chat about this video</h2>
-                <div className="flex items-center gap-2 text-xs">
-                  <label htmlFor="model" className="text-white/60">Model</label>
-                  <select
-                    id="model"
-                    className="rounded bg-black/30 border border-white/10 px-2 py-1 text-xs"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                  >
-                    <option value="gpt-4o-mini-2024-07-18">gpt-4o-mini-2024-07-18</option>
-                    <option value="gpt-5">gpt-5</option>
-                  </select>
-                </div>
-              </div>
+              <h2 className="text-lg font-semibold mb-2">Chat about this video</h2>
               <div className="text-xs text-white/60 mb-3">Grounded to this video&apos;s transcript. {apiKey ? "Using your API key." : "Using shared limits; add your API key for better reliability."}</div>
               <div className="overflow-y-auto rounded border border-white/10 bg-black/20 p-3 space-y-2 resize-y h-[200px] min-h-[200px]">
                 {messages.length === 0 ? (
