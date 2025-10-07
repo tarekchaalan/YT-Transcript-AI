@@ -163,6 +163,73 @@ export default function VideoPage() {
     ask(q);
   }, [prompt, ask]);
 
+  // Client-side export helpers
+  const triggerDownload = useCallback((filename: string, content: string, mime: string = "text/plain") => {
+    try {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {}
+  }, []);
+
+  const buildChatTxt = useCallback(() => {
+    const lines: string[] = [
+      `Video ${id} — Chat Log`,
+      "",
+      ...messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`),
+    ];
+    return lines.join("\n");
+  }, [id, messages]);
+
+  const buildChatMd = useCallback(() => {
+    const lines: string[] = ["# Chat Log", ""];
+    messages.forEach((m) => {
+      const title = m.role === "user" ? "User" : m.role === "assistant" ? "Assistant" : "System";
+      lines.push(`### ${title}`);
+      lines.push("");
+      lines.push(m.content);
+      lines.push("");
+    });
+    return lines.join("\n");
+  }, [messages]);
+
+  const buildFullTxt = useCallback(() => {
+    const lines: string[] = [];
+    lines.push(`Video ${id}`);
+    lines.push("");
+    lines.push("TL;DR");
+    lines.push(summary || "");
+    lines.push("");
+    lines.push("Chapters");
+    chapters.forEach((c) => lines.push(`${toTime(c.start)}  ${c.title}`));
+    lines.push("");
+    lines.push("Key Takeaways");
+    takeaways.forEach((t) => lines.push(`- ${t}`));
+    lines.push("");
+    lines.push("Entities");
+    if (entitiesByType) {
+      if (entitiesByType.people?.length) lines.push(`People: ${entitiesByType.people.join(", ")}`);
+      if (entitiesByType.organizations?.length) lines.push(`Organizations: ${entitiesByType.organizations.join(", ")}`);
+      if (entitiesByType.products?.length) lines.push(`Products: ${entitiesByType.products.join(", ")}`);
+    } else if (entities?.length) {
+      lines.push(entities.join(", "));
+    }
+    lines.push("");
+    lines.push("Chat Log");
+    messages.forEach((m) => lines.push(`${m.role.toUpperCase()}: ${m.content}`));
+    lines.push("");
+    lines.push("Transcript");
+    const fullText = segments.map((s) => s.text).join(" ");
+    lines.push(fullText);
+    return lines.join("\n");
+  }, [id, summary, chapters, takeaways, entitiesByType, entities, messages, segments]);
+
   useEffect(() => {
     if (t && playerRef.current) {
       try {
@@ -433,11 +500,51 @@ export default function VideoPage() {
 
           <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
             <h3 className="text-base font-semibold mb-2">Export</h3>
-            <div className="flex flex-wrap gap-2 text-sm">
-              <a className="underline" href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/export/txt/${id}`} download={`${id}.txt`}>.txt</a>
-              <a className="underline" href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/export/srt/${id}`} download={`${id}.srt`}>.srt</a>
-              <a className="underline" href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/export/vtt/${id}`} download={`${id}.vtt`}>.vtt</a>
-              <a className="underline" href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/export/chapters/${id}`} download={`${id}-chapters.json`}>chapters.json</a>
+            <div className="space-y-3 text-sm">
+              <div>
+                <div className="font-medium mb-1">Full Page</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="underline"
+                    onClick={() => triggerDownload(`${id}-full.txt`, buildFullTxt(), "text/plain")}
+                  >
+                    txt
+                  </button>
+                  <a
+                    className="underline"
+                    href={`${baseApi}/api/export/full/md/${id}`}
+                    download={`${id}-full.md`}
+                  >
+                    markdown
+                  </a>
+                </div>
+              </div>
+              <div>
+                <div className="font-medium mb-1">Transcript</div>
+                <div className="flex flex-wrap gap-2">
+                  <a className="underline" href={`${baseApi}/api/export/txt/${id}`} download={`${id}.txt`}>txt</a>
+                  <a className="underline" href={`${baseApi}/api/export/srt/${id}`} download={`${id}.srt`}>srt</a>
+                  <a className="underline" href={`${baseApi}/api/export/vtt/${id}`} download={`${id}.vtt`}>vtt</a>
+                  <a className="underline" href={`${baseApi}/api/export/transcript/json/${id}`} download={`${id}-transcript.json`}>json</a>
+                </div>
+              </div>
+              <div>
+                <div className="font-medium mb-1">AI Chat</div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="underline"
+                    onClick={() => triggerDownload(`${id}-chat.txt`, buildChatTxt(), "text/plain")}
+                  >
+                    txt
+                  </button>
+                  <button
+                    className="underline"
+                    onClick={() => triggerDownload(`${id}-chat.md`, buildChatMd(), "text/markdown")}
+                  >
+                    markdown
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         </div>
