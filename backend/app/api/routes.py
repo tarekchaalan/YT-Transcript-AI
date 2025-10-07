@@ -12,9 +12,12 @@ from app.models.schemas import (
     QARequest,
     QAResponse,
     EntitiesResponse,
+    ChatRequest,
+    ChatResponse,
 )
 from app.services.transcript import get_transcript_pipeline, segments_to_text
 from app.services.ai import summarize, chapters as ai_chapters, takeaways as ai_takeaways, answer as ai_answer, entities as ai_entities
+from app.services.ai import grounded_chat
 from app.services.ai import override_openai_key_for_request
 from app.core.limits import guard_request
 
@@ -210,4 +213,16 @@ async def get_entities_by_type(video_id: str, x_openai_key: str | None = Header(
         cats = {"people": people, "organizations": orgs, "products": products}
     return {"video_id": video_id, **cats}
 
+
+
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(guard_request)])
+async def post_chat(req: ChatRequest, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")) -> ChatResponse:
+    segments, _, _ = get_transcript_pipeline(req.video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    with override_openai_key_for_request(x_openai_key):
+        out = grounded_chat(text, [m.dict() for m in req.messages])
+    from app.models.schemas import ChatMessage
+    return ChatResponse(video_id=req.video_id, message=ChatMessage(role="assistant", content=out))
 

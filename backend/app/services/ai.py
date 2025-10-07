@@ -276,3 +276,44 @@ def entities_by_type(text: str) -> dict[str, List[str]]:
     }
 
 
+def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16000) -> str:
+    """Perform grounded chat limited to the transcript content and provided history.
+
+    - Truncates transcript to max_chars.
+    - Includes a strict system instruction to only use the transcript.
+    - Accepts prior messages in OpenAI chat format (role, content).
+    """
+    key = _effective_openai_key()
+    system = (
+        "You are a helpful assistant. You must answer ONLY based on the provided transcript. "
+        "If the answer cannot be derived from the transcript, say you don't know. Be concise."
+    )
+    # If no key is available, provide a graceful fallback using QA on last user message.
+    user_prompt = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            user_prompt = m.get("content", "")
+            break
+    if not key:
+        return answer(text, user_prompt) if user_prompt else "I don't know."
+
+    try:
+        from openai import OpenAI  # type: ignore
+        client = OpenAI(api_key=key)
+        chat_messages = [{"role": "system", "content": system}]
+        chat_messages.extend(messages[-10:])  # bound history to last 10
+        chat_messages.append({
+            "role": "system",
+            "content": "Transcript (truncated):\n" + text[:max_chars],
+        })
+        resp = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            messages=chat_messages,  # type: ignore[arg-type]
+            temperature=0.2,
+        )
+        out = resp.choices[0].message.content  # type: ignore[assignment]
+        return out or ""
+    except Exception:
+        # Fallback to simple grounded QA
+        return answer(text, user_prompt) if user_prompt else "I don't know."
+

@@ -63,3 +63,21 @@ class EntitiesResponse(BaseModel):
     entities: List[str]
 
 
+# Chat models
+class ChatMessage(BaseModel):
+    role: str = Field(..., description="one of system|user|assistant")
+    content: str
+
+
+class ChatRequest(BaseModel):
+    video_id: str
+    messages: List[ChatMessage] = Field(
+        default_factory=list,
+        description="Prior chat history; newest last. The last message should be the user's prompt.",
+    )
+
+
+class ChatResponse(BaseModel):
+    video_id: str
+    message: ChatMessage
+

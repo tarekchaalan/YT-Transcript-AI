@@ -5,6 +5,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useChapterShortcuts } from "./shortcuts";
 
 type TranscriptSegment = { start: number; end: number; text: string };
+type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export default function VideoPage() {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +19,9 @@ export default function VideoPage() {
   const [entities, setEntities] = useState<string[]>([]);
   const [entitiesByType, setEntitiesByType] = useState<{ people: string[]; organizations: string[]; products: string[] } | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [prompt, setPrompt] = useState<string>("");
+  const [sending, setSending] = useState<boolean>(false);
   const [loadingTranscript, setLoadingTranscript] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingChapters, setLoadingChapters] = useState(true);
@@ -25,6 +29,7 @@ export default function VideoPage() {
   const [loadingEntities, setLoadingEntities] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const playerRef = useRef<HTMLIFrameElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Load saved API key if present
@@ -116,6 +121,46 @@ export default function VideoPage() {
   }, [id, apiKey, withKey]);
 
   useEffect(() => {
+    try {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    } catch {}
+  }, [messages, sending]);
+
+  const baseApi = useMemo(() => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000", []);
+
+  const ask = useCallback(async (q: string) => {
+    if (!q || sending) return;
+    const userMsg: ChatMessage = { role: "user", content: q };
+    setMessages((m) => [...m, userMsg]);
+    setPrompt("");
+    setSending(true);
+    try {
+      const init = withKey({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_id: id, messages: [...messages, userMsg] }),
+      });
+      const res = await fetch(`${baseApi}/api/chat`, init);
+      if (!res.ok) throw new Error(`Chat failed (${res.status})`);
+      const data = await res.json();
+      const assistant: ChatMessage = data?.message || { role: "assistant", content: "" };
+      setMessages((m) => [...m, assistant]);
+    } catch (e) {
+      const err = e instanceof Error ? e.message : "Something went wrong";
+      setMessages((m) => [...m, { role: "assistant", content: `Error: ${err}` }]);
+    } finally {
+      setSending(false);
+    }
+  }, [id, messages, sending, withKey, baseApi]);
+
+  const onSubmit = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    const q = prompt.trim();
+    if (!q) return;
+    ask(q);
+  }, [prompt, ask]);
+
+  useEffect(() => {
     if (t && playerRef.current) {
       try {
         const sec = parseFloat(t);
@@ -175,6 +220,67 @@ export default function VideoPage() {
               ) : (
                 <div className="prose prose-invert max-w-none whitespace-pre-wrap text-sm">{summary}</div>
               )}
+            </section>
+
+            <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+              <h2 className="text-lg font-semibold mb-2">Chat about this video</h2>
+              <div className="text-xs text-white/60 mb-3">Grounded to this video's transcript. {apiKey ? "Using your API key." : "Using shared limits; add your API key for better reliability."}</div>
+              <div className="h-64 md:h-80 overflow-y-auto rounded border border-white/10 bg-black/20 p-3 space-y-2">
+                {messages.length === 0 ? (
+                  <div className="text-sm text-white/50">Ask anything about the content. Example: "Summarize this video into 100 words".</div>
+                ) : (
+                  messages.map((m, i) => (
+                    <div key={i} className={m.role === "user" ? "text-sm" : "text-sm text-white/90"}>
+                      <div className={m.role === "user" ? "bg-blue-500/10 border border-blue-500/20 inline-block px-3 py-2 rounded" : "bg-white/5 border border-white/10 inline-block px-3 py-2 rounded"}>
+                        {m.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {sending && (
+                  <div className="text-sm text-white/70 flex items-center">
+                    <span className="inline-block h-3 w-3 border-2 border-white/60 border-t-transparent rounded-full animate-spin mr-2" />
+                    Thinking…
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+              <form onSubmit={onSubmit} className="mt-3 flex gap-2">
+                <input
+                  className="flex-1 rounded bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-white/20"
+                  placeholder="Ask a question…"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  disabled={sending}
+                />
+                <button
+                  type="submit"
+                  disabled={sending || !prompt.trim()}
+                  className="rounded-md bg-white text-black px-3 py-2 text-sm font-medium disabled:opacity-60"
+                  aria-label="Send"
+                >
+                  Send
+                </button>
+              </form>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {[
+                  "Summarize this video into 100 words",
+                  "Give 5 bullet-point insights",
+                  "List major entities and their roles",
+                  "Outline chapters and timestamps",
+                  "What are the key takeaways?",
+                ].map((q, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    disabled={sending}
+                    onClick={() => ask(q)}
+                    className="rounded-full border border-white/10 px-2 py-1 hover:bg-white/5 disabled:opacity-60"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </section>
 
             <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
