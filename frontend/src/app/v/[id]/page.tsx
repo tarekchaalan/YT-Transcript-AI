@@ -35,6 +35,13 @@ export default function VideoPage() {
   const playerRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  const withKey = useCallback((init?: RequestInit): RequestInit => {
+    const headers = new Headers(init?.headers || {});
+    if (apiKey) headers.set("X-OpenAI-Key", apiKey);
+    if (model) headers.set("X-OpenAI-Model", model);
+    return { ...init, headers };
+  }, [apiKey, model]);
+
   useEffect(() => {
     // Load saved API key if present
     try {
@@ -43,12 +50,18 @@ export default function VideoPage() {
     } catch {}
   }, []);
 
-  const withKey = useCallback((init?: RequestInit): RequestInit => {
-    const headers = new Headers(init?.headers || {});
-    if (apiKey) headers.set("X-OpenAI-Key", apiKey);
-    if (model) headers.set("X-OpenAI-Model", model);
-    return { ...init, headers };
-  }, [apiKey]);
+  // Load saved model
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ytai_openai_model") || "";
+      if (saved) setModel(saved);
+    } catch {}
+  }, []);
+
+  // Persist model
+  useEffect(() => {
+    try { localStorage.setItem("ytai_openai_model", model); } catch {}
+  }, [model]);
 
   useEffect(() => {
     let cancelled = false;
