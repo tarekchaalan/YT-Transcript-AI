@@ -157,6 +157,61 @@ def chapters(text: str, duration: float | None = None) -> List[tuple[str, float]
     return [(phrases[i] if i < len(phrases) else f"Chapter {i+1}", i * interval) for i in range(num)]
 
 
+def _format_ts_vtt(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}.000"
+
+
+def chapters_from_segments(segments: List[object]) -> List[tuple[str, float]]:
+    """Generate chapters using VTT built from segments so the model can align content to time.
+
+    Falls back to text-only chapters() if the AI parse fails.
+    """
+    # Build compact VTT (truncate to avoid token limits)
+    vtt_lines: List[str] = ["WEBVTT", ""]
+    total = 0
+    for seg in segments:
+        try:
+            start = float(getattr(seg, "start"))
+            end = float(getattr(seg, "end"))
+            text = str(getattr(seg, "text", "")).strip()
+        except Exception:
+            continue
+        if not text:
+            continue
+        vtt_lines.append(f"{_format_ts_vtt(start)} --> {_format_ts_vtt(end)}")
+        vtt_lines.append(text)
+        vtt_lines.append("")
+        total += len(text)
+        if total > 16000:
+            break
+    vtt_blob = "\n".join(vtt_lines)
+
+    prompt = (
+        "Given the following VTT captions with timestamps, create 5-10 chapter titles with precise start times in seconds.\n"
+        "Return one chapter per line strictly as 'title|start_seconds'.\n\n" + vtt_blob
+    )
+    ai = _call_openai(prompt, system="You generate chapter outlines with timestamps grounded to VTT timing")
+    if ai:
+        items: List[tuple[str, float]] = []
+        for line in ai.splitlines():
+            if "|" not in line:
+                continue
+            t, s = line.split("|", 1)
+            try:
+                items.append((t.strip("- •"), float(s.strip())))
+            except Exception:
+                continue
+        if items:
+            return items
+
+    # Fallback to text-based
+    text = " ".join(getattr(seg, "text", "") for seg in segments)
+    duration = float(getattr(segments[-1], "end", 0.0)) if segments else None
+    return chapters(text, duration)
+
 def takeaways(text: str) -> List[str]:
     prompt = "List the 5-10 most important actionable takeaways from the transcript." + text[:16000]
     ai = _call_openai(prompt, system="You produce crisp, numbered takeaways")

@@ -17,6 +17,7 @@ from app.models.schemas import (
 )
 from app.services.transcript import get_transcript_pipeline, segments_to_text
 from app.services.ai import summarize, chapters as ai_chapters, takeaways as ai_takeaways, answer as ai_answer, entities as ai_entities
+from app.services.ai import chapters_from_segments
 from app.services.ai import grounded_chat
 from app.services.ai import override_openai_key_for_request
 from app.core.limits import guard_request
@@ -57,7 +58,7 @@ async def get_chapters(video_id: str, x_openai_key: str | None = Header(default=
     text = segments_to_text(segments)
     duration = segments[-1].end if segments else None
     with override_openai_key_for_request(x_openai_key):
-        items = ai_chapters(text, duration)
+        items = chapters_from_segments(segments)
     # Clamp chapter starts to valid range [0, duration]
     clamped: list[tuple[str, float]] = []
     for t, s in items:
@@ -172,7 +173,7 @@ async def export_chapters(video_id: str, x_openai_key: str | None = Header(defau
     text = segments_to_text(segments)
     duration = segments[-1].end if segments else None
     with override_openai_key_for_request(x_openai_key):
-        items = ai_chapters(text, duration)
+        items = chapters_from_segments(segments)
     payload = {"video_id": video_id, "chapters": [{"title": t, "start": s} for t, s in items]}
     return JSONResponse(content=payload, headers={"Content-Disposition": f"attachment; filename={video_id}-chapters.json"})
 
