@@ -226,3 +226,128 @@ async def post_chat(req: ChatRequest, x_openai_key: str | None = Header(default=
     from app.models.schemas import ChatMessage
     return ChatResponse(video_id=req.video_id, message=ChatMessage(role="assistant", content=out))
 
+# ========= Extended export endpoints =========
+
+@router.get("/export/transcript/json/{video_id}", dependencies=[Depends(guard_request)])
+async def export_transcript_json(video_id: str):
+    segments, source, lang = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    payload = {
+        "video_id": video_id,
+        "source": source,
+        "language": lang,
+        "segments": [s.dict() for s in segments],
+        "text": segments_to_text(segments),
+    }
+    return JSONResponse(content=payload, headers={"Content-Disposition": f"attachment; filename={video_id}-transcript.json"})
+
+
+@router.get("/export/summary/{video_id}", response_class=PlainTextResponse, dependencies=[Depends(guard_request)])
+async def export_summary(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    with override_openai_key_for_request(x_openai_key):
+        body = summarize(text)
+    return PlainTextResponse(content=body, headers={"Content-Disposition": f"attachment; filename={video_id}-summary.txt"})
+
+
+@router.get("/export/takeaways/{video_id}", response_class=PlainTextResponse, dependencies=[Depends(guard_request)])
+async def export_takeaways(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    with override_openai_key_for_request(x_openai_key):
+        items = ai_takeaways(text)
+    body = "\n".join(items)
+    return PlainTextResponse(content=body, headers={"Content-Disposition": f"attachment; filename={video_id}-takeaways.txt"})
+
+
+@router.get("/export/entities/txt/{video_id}", response_class=PlainTextResponse, dependencies=[Depends(guard_request)])
+async def export_entities_txt(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    with override_openai_key_for_request(x_openai_key):
+        items = ai_entities(text)
+    body = "\n".join(items)
+    return PlainTextResponse(content=body, headers={"Content-Disposition": f"attachment; filename={video_id}-entities.txt"})
+
+
+@router.get("/export/entities/json/{video_id}", dependencies=[Depends(guard_request)])
+async def export_entities_json(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    with override_openai_key_for_request(x_openai_key):
+        items = ai_entities(text)
+    payload = {"video_id": video_id, "entities": items}
+    return JSONResponse(content=payload, headers={"Content-Disposition": f"attachment; filename={video_id}-entities.json"})
+
+
+@router.get("/export/chapters/md/{video_id}", response_class=PlainTextResponse, dependencies=[Depends(guard_request)])
+async def export_chapters_md(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    duration = segments[-1].end if segments else None
+    with override_openai_key_for_request(x_openai_key):
+        items = ai_chapters(text, duration)
+    lines = ["# Chapters"]
+    for t, s in items:
+        try:
+            s_float = float(s)
+        except Exception:
+            continue
+        lines.append(f"- {t} ({_format_timestamp(s_float)})")
+    body = "\n".join(lines)
+    return PlainTextResponse(content=body, headers={"Content-Disposition": f"attachment; filename={video_id}-chapters.md"})
+
+
+@router.get("/export/full/md/{video_id}", response_class=PlainTextResponse, dependencies=[Depends(guard_request)])
+async def export_full_md(video_id: str, x_openai_key: str | None = Header(default=None, alias="X-OpenAI-Key")):
+    segments, _, _ = get_transcript_pipeline(video_id)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Transcript not available")
+    text = segments_to_text(segments)
+    duration = segments[-1].end if segments else None
+    with override_openai_key_for_request(x_openai_key):
+        sm = summarize(text)
+        ch = ai_chapters(text, duration)
+        tk = ai_takeaways(text)
+        en = ai_entities(text)
+    md_lines: list[str] = []
+    md_lines.append(f"# Video {video_id}")
+    md_lines.append("")
+    md_lines.append("## TL;DR")
+    md_lines.append(sm)
+    md_lines.append("")
+    md_lines.append("## Chapters")
+    for t, s in ch:
+        try:
+            s_float = float(s)
+        except Exception:
+            continue
+        md_lines.append(f"- {t} ({_format_timestamp(s_float)})")
+    md_lines.append("")
+    md_lines.append("## Key Takeaways")
+    for item in tk:
+        md_lines.append(f"- {item}")
+    md_lines.append("")
+    md_lines.append("## Entities")
+    if en:
+        md_lines.append(", ".join(en))
+    else:
+        md_lines.append("(none)")
+    md_lines.append("")
+    md_lines.append("## Transcript")
+    md_lines.append(text)
+    body = "\n".join(md_lines)
+    return PlainTextResponse(content=body, headers={"Content-Disposition": f"attachment; filename={video_id}-full.md"})
+
