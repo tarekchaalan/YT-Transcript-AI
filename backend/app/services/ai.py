@@ -286,7 +286,8 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
     key = _effective_openai_key()
     system = (
         "You are a helpful assistant. You must answer ONLY based on the provided transcript. "
-        "If the answer cannot be derived from the transcript, say you don't know. Be concise."
+        "If the answer cannot be derived from the transcript, say you don't know. Be concise. "
+        "Always format your response as Markdown (use headings, paragraphs, and numbered/bulleted lists)."
     )
     # If no key is available, provide a graceful fallback using QA on last user message.
     user_prompt = ""

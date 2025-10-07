@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useChapterShortcuts } from "./shortcuts";
 
 type TranscriptSegment = { start: number; end: number; text: string };
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+
+// Load react-markdown only on client to keep bundle light
+const ReactMarkdown: any = dynamic(() => import("react-markdown"), { ssr: false });
 
 export default function VideoPage() {
   const { id } = useParams<{ id: string }>();
@@ -231,8 +235,12 @@ export default function VideoPage() {
                 ) : (
                   messages.map((m, i) => (
                     <div key={i} className={m.role === "user" ? "text-sm" : "text-sm text-white/90"}>
-                      <div className={m.role === "user" ? "bg-blue-500/10 border border-blue-500/20 inline-block px-3 py-2 rounded" : "bg-white/5 border border-white/10 inline-block px-3 py-2 rounded"}>
-                        {m.content}
+                      <div className={m.role === "user" ? "bg-blue-500/10 border border-blue-500/20 inline-block px-3 py-2 rounded" : "bg-white/5 border border-white/10 inline-block px-3 py-2 rounded prose prose-invert max-w-none text-sm"}>
+                        {m.role === "assistant" ? (
+                          <ReactMarkdown>{m.content}</ReactMarkdown>
+                        ) : (
+                          <div>{m.content}</div>
+                        )}
                       </div>
                     </div>
                   ))
