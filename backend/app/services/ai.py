@@ -164,7 +164,52 @@ def _format_ts_vtt(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}.000"
 
 
-def chapters_from_segments(segments: List[object]) -> List[tuple[str, float]]:
+def _postprocess_chapters(items: List[tuple[str, float]], duration: float | None) -> List[tuple[str, float]]:
+    # Clamp, sort, dedupe, and enforce increasing with a min-gap
+    min_gap = 20.0  # seconds
+    out: List[tuple[str, float]] = []
+    # Normalize
+    norm: List[tuple[str, float]] = []
+    for t, s in items:
+        try:
+            s_float = float(s)
+        except Exception:
+            continue
+        if s_float < 0:
+            s_float = 0.0
+        if duration is not None and s_float > duration:
+            s_float = max(0.0, float(duration))
+        norm.append((t, s_float))
+    # Sort by time
+    norm.sort(key=lambda x: x[1])
+    last = -1e9
+    for title, ts in norm:
+        if out and title == out[-1][0] and abs(ts - out[-1][1]) < 5:
+            # same title and near-duplicate time -> skip
+            continue
+        if ts <= last + min_gap:
+            ts = last + min_gap
+        if duration is not None and ts > duration:
+            break
+        out.append((title, ts))
+        last = ts
+    # Ensure we have at least 5 items if possible by loosening min_gap slightly
+    if len(out) < 5 and len(norm) >= 5:
+        out = []
+        last = -1e9
+        for title, ts in sorted(norm, key=lambda x: x[1]):
+            if ts <= last + 10.0:
+                continue
+            if duration is not None and ts > duration:
+                break
+            out.append((title, ts))
+            last = ts
+            if len(out) >= 5:
+                break
+    return out[:10]
+
+
+def chapters_from_segments(segments: List[object], duration: float | None = None) -> List[tuple[str, float]]:
     """Generate chapters using VTT built from segments so the model can align content to time.
 
     Falls back to text-only chapters() if the AI parse fails.
@@ -189,8 +234,10 @@ def chapters_from_segments(segments: List[object]) -> List[tuple[str, float]]:
             break
     vtt_blob = "\n".join(vtt_lines)
 
+    dur_note = f" The video duration is approximately {int(duration)} seconds; do not output any start beyond this." if duration else ""
     prompt = (
         "Given the following VTT captions with timestamps, create 5-10 chapter titles with precise start times in seconds.\n"
+        "Rules: times must be strictly increasing, within video bounds, and reflect when the topic begins." + dur_note + "\n"
         "Return one chapter per line strictly as 'title|start_seconds'.\n\n" + vtt_blob
     )
     ai = _call_openai(prompt, system="You generate chapter outlines with timestamps grounded to VTT timing")
@@ -205,12 +252,12 @@ def chapters_from_segments(segments: List[object]) -> List[tuple[str, float]]:
             except Exception:
                 continue
         if items:
-            return items
+            return _postprocess_chapters(items, duration)
 
     # Fallback to text-based
     text = " ".join(getattr(seg, "text", "") for seg in segments)
-    duration = float(getattr(segments[-1], "end", 0.0)) if segments else None
-    return chapters(text, duration)
+    fallback_duration = float(getattr(segments[-1], "end", 0.0)) if segments else duration
+    return chapters(text, fallback_duration)
 
 def takeaways(text: str) -> List[str]:
     prompt = "List the 5-10 most important actionable takeaways from the transcript." + text[:16000]
