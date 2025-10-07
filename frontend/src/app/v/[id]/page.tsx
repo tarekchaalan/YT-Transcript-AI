@@ -300,7 +300,7 @@ export default function VideoPage() {
           <div className="text-sm text-red-400">{error}</div>
         ) : (
           <>
-            <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+            <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[180px]">
               <h2 className="text-lg font-semibold mb-2">TL;DR</h2>
               {loadingSummary ? (
                 <div className="text-sm text-white/60 flex items-center">
@@ -377,7 +377,7 @@ export default function VideoPage() {
               </div>
             </section>
 
-            <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+            <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[220px]">
               <h2 className="text-lg font-semibold mb-2">Transcript</h2>
               {loadingTranscript ? (
                 <div className="text-sm text-white/60 flex items-center">
@@ -385,7 +385,7 @@ export default function VideoPage() {
                   Cleaning up and punctuating…
                 </div>
               ) : (
-                <div className="text-sm leading-6 space-y-1">
+                <div className="text-sm leading-6 space-y-1 max-h-[60vh] overflow-auto">
                   {segments.map((s, i) => (
                     <div key={i} className="hover:bg-white/5 rounded px-1">
                       <button
@@ -405,7 +405,7 @@ export default function VideoPage() {
       </div>
 
       <aside className="space-y-6">
-        <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+        <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[140px]">
           <h3 className="text-base font-semibold mb-2">API Key (optional)</h3>
           <p className="text-xs text-white/60 mb-2">Provide your own OpenAI API key to improve AI quality and avoid shared limits. Stored locally in your browser.</p>
           <input
@@ -421,7 +421,7 @@ export default function VideoPage() {
           />
         </section>
         <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto space-y-6 pr-2">
-          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[220px]">
             <h3 className="text-base font-semibold mb-2">Chapters</h3>
             {loadingChapters ? (
               <div className="text-sm text-white/60 flex items-center">
@@ -429,7 +429,7 @@ export default function VideoPage() {
                 Analyzing video for chapters…
               </div>
             ) : (
-              <ul className="text-sm space-y-1">
+              <ul className="text-sm space-y-1 max-h-[50vh] overflow-auto">
                 {miniToc.map((c, i) => (
                   <li key={i}>
                     <button
@@ -446,7 +446,7 @@ export default function VideoPage() {
             )}
           </section>
 
-          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[220px]">
             <h3 className="text-base font-semibold mb-2">Key takeaways</h3>
             {loadingTakeaways ? (
               <div className="text-sm text-white/60 flex items-center">
@@ -454,7 +454,7 @@ export default function VideoPage() {
                 Extracting key takeaways…
               </div>
             ) : (
-              <ul className="text-sm list-disc pl-5 space-y-1">
+              <ul className="text-sm list-disc pl-5 space-y-1 max-h-[50vh] overflow-auto">
                 {takeaways.map((t, i) => (
                   <li key={i}>{t}</li>
                 ))}
@@ -462,7 +462,7 @@ export default function VideoPage() {
             )}
           </section>
 
-          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[220px]">
             <h3 className="text-base font-semibold mb-2">Entities</h3>
             {loadingEntities ? (
               <div className="text-sm text-white/60 flex items-center">
@@ -470,7 +470,7 @@ export default function VideoPage() {
                 Extracting entities…
               </div>
             ) : entitiesByType ? (
-              <div className="space-y-3 text-sm">
+              <div className="space-y-3 text-sm max-h-[50vh] overflow-auto">
                 {entitiesByType.people && entitiesByType.people.length > 0 && (
                   <div>
                     <div className="font-medium mb-1">People</div>
@@ -503,7 +503,7 @@ export default function VideoPage() {
                 )}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 max-h-[50vh] overflow-auto">
                 {entities.map((e, i) => (
                   <a
                     key={i}
@@ -518,7 +518,7 @@ export default function VideoPage() {
             )}
           </section>
 
-          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
+          <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[160px]">
             <h3 className="text-base font-semibold mb-2">Export</h3>
             <div className="space-y-3 text-sm">
               <div>
