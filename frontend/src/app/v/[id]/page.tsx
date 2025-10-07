@@ -130,6 +130,26 @@ export default function VideoPage() {
   }, [messages, sending]);
 
   const baseApi = useMemo(() => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000", []);
+  const chatStorageKey = useMemo(() => `ytai_chat_${id}`, [id]);
+
+  // Load saved chat for this video
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(chatStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ChatMessage[];
+        if (Array.isArray(parsed)) setMessages(parsed);
+      }
+    } catch {}
+  }, [chatStorageKey]);
+
+  // Persist chat on changes (keep last 100 messages)
+  useEffect(() => {
+    try {
+      const toSave = messages.slice(-100);
+      localStorage.setItem(chatStorageKey, JSON.stringify(toSave));
+    } catch {}
+  }, [messages, chatStorageKey]);
 
   const ask = useCallback(async (q: string) => {
     if (!q || sending) return;
