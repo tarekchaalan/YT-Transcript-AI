@@ -51,6 +51,7 @@ def _call_openai(
     presence_penalty: float = 0.0,
     frequency_penalty: float = 0.0,
     top_p: float = 0.0,
+    response_format: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     key = _effective_openai_key()
     if not key:
@@ -64,18 +65,21 @@ def _call_openai(
         system_bytes = len(system.encode("utf-8", errors="ignore"))
         prompt_hash = hashlib.sha256((system + "\n" + prompt).encode("utf-8", errors="ignore")).hexdigest()
         t0 = time.time()
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            top_p=top_p,
-        )
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "presence_penalty": presence_penalty,
+            "frequency_penalty": frequency_penalty,
+            "top_p": top_p,
+        }
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        resp = client.chat.completions.create(**kwargs)
         out = resp.choices[0].message.content  # type: ignore[assignment]
         try:
             finish_reason = getattr(resp.choices[0], "finish_reason", None)
@@ -260,20 +264,24 @@ def extract_keyphrases(text: str, max_phrases: int = 12) -> List[str]:
 def summarize(text: str) -> str:
     text_clip = _token_clip(text, max_tokens=3500)
     prompt = (
-        "Summarize in 5–8 bullets, 12–22 words each, no sub-bullets:\n" + text_clip
+        "Summarize in 5–8 bullets, 12–22 words each. No sub-bullets, one bullet per line:\n" + text_clip
     )
     ai = _call_openai(
         prompt,
-        system="Return ONLY bullets starting with '-'",
+        system="Return ONLY bullets starting with '-' and a newline after EACH bullet. No other text.",
         max_tokens=500,
         presence_penalty=0.0,
         frequency_penalty=0.0,
     )
     if ai:
         # Enforce bullet-only output by regex filtering
-        lines = [l for l in ai.splitlines() if l.strip().startswith("-")]
+        lines = [l for l in ai.splitlines() if l.strip().startswith("- ")]
+        # enforce word count bounds 12..24
+        def wc(s: str) -> int:
+            return len([w for w in re.findall(r"\b\w+\b", s)])
+        lines = [l for l in lines if 12 <= wc(l) <= 24]
         if 5 <= len(lines) <= 8:
-            return "\n".join(lines)
+            return "\n".join(lines[:8])
 
     # Better fallback: extract sentences and create summary
     sentences = re.split(r'[.!?]+', text)
@@ -323,6 +331,7 @@ def chapters(text: str, duration: float | None = None) -> List[tuple[str, float]
             presence_penalty=0.0,
             frequency_penalty=0.0,
             top_p=0.0,
+            response_format={"type": "json_object"},
         )
         if ai:
             break
@@ -352,6 +361,7 @@ def chapters(text: str, duration: float | None = None) -> List[tuple[str, float]
                 presence_penalty=0.0,
                 frequency_penalty=0.0,
                 top_p=0.0,
+                response_format={"type": "json_object"},
             )
             if ai2:
                 break
@@ -369,6 +379,9 @@ def chapters(text: str, duration: float | None = None) -> List[tuple[str, float]
             except Exception:
                 parse_ok = False
     if items:
+        # Filter out generic titles
+        generic = {"introduction", "overview", "conclusion", "finale", "final thoughts", "summary"}
+        items = [(t, s) for (t, s) in items if t.strip().lower() not in generic]
         return _postprocess_chapters(items, duration)
     # fallback: evenly spaced chapters titled by keyphrases
     num = 8
@@ -389,7 +402,8 @@ def _format_ts_vtt(seconds: float) -> str:
 
 def _postprocess_chapters(items: List[tuple[str, float]], duration: float | None) -> List[tuple[str, float]]:
     # Clamp, sort, dedupe, and enforce increasing with a min-gap
-    min_gap = max(10.0, (duration or 0) / 80.0)
+    # Stronger gap: avoid micro-chapters; scale with duration
+    min_gap = max(20.0, (duration or 0) / 60.0)
     out: List[tuple[str, float]] = []
     # Normalize
     norm: List[tuple[str, float]] = []
@@ -490,7 +504,17 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
     else:
         cue_seconds_list = cue_seconds_full
     prompt = (
-        '{"task":"chapters","rules":["strict","int_seconds"],"allowed_start_seconds":' + json.dumps(cue_seconds_list) + "}\n"
+        '{"task":"chapters","rules":['
+        '"strict","int_seconds",'
+        '"count_5_to_10",'
+        '"min_gap_seconds:35",'
+        '"cover_full_span",'
+        '"snap_to_allowed",'
+        '"title_3_to_7_words",'
+        '"no_generic_titles:[Introduction,Overview,Conclusion,Final Thoughts,Summary]",'
+        '"title_max_len:60",'
+        '"title_must_include_a_specific_noun_or_action_from_nearby_cues"],'
+        '"allowed_start_seconds":' + json.dumps(cue_seconds_list) + '}' "\n"
         "WEBVTT:\n" + vtt_blob
     )
 
@@ -503,6 +527,7 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
             presence_penalty=0.0,
             frequency_penalty=0.0,
             top_p=0.0,
+            response_format={"type": "json_object"},
         )
         if ai:
             break
@@ -551,6 +576,9 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
         except Exception:
             items = []
         if 5 <= len(items) <= 10:
+            # Filter out generic titles
+            generic = {"introduction", "overview", "conclusion", "finale", "final thoughts", "summary"}
+            items = [(t, s) for (t, s) in items if t.strip().lower() not in generic]
             return _postprocess_chapters(items, duration)
         # Retry once with harsher system if parse failed or count out of bounds
         ai2 = None
@@ -562,6 +590,7 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
                 presence_penalty=0.0,
                 frequency_penalty=0.0,
                 top_p=0.0,
+                response_format={"type": "json_object"},
             )
             if ai2:
                 break
@@ -612,7 +641,13 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
 def takeaways(text: str) -> List[str]:
     text_clip = _token_clip(text, max_tokens=3000)
     system = 'Return ONLY JSON: {"takeaways":["...", "..."]}'
-    user = '{"task":"takeaways","rules":["concise","actionable","5-10"]}\n' + text_clip
+    user = (
+        '{"task":"takeaways","rules":['
+        '"concise","actionable","5-10",'
+        '"each_uses_a_verb",'
+        '"prefer_specifics_numbers_examples",'
+        '"no_restatements","no_fluff"]}\n' + text_clip
+    )
     ai = None
     for i in range(2):
         ai = _call_openai(
@@ -622,6 +657,7 @@ def takeaways(text: str) -> List[str]:
             presence_penalty=0.0,
             frequency_penalty=0.0,
             top_p=0.0,
+            response_format={"type": "json_object"},
         )
         if ai:
             break
@@ -644,6 +680,7 @@ def takeaways(text: str) -> List[str]:
                 presence_penalty=0.0,
                 frequency_penalty=0.0,
                 top_p=0.0,
+                response_format={"type": "json_object"},
             )
             if ai2:
                 break
@@ -694,6 +731,7 @@ def entities(text: str) -> List[str]:
             presence_penalty=0.0,
             frequency_penalty=0.0,
             top_p=0.0,
+            response_format={"type": "json_object"},
         )
         if ai:
             break
@@ -731,7 +769,14 @@ def entities_by_type(text: str) -> dict[str, List[str]]:
     Tries OpenAI first; falls back to heuristic categorization.
     """
     text_clip = _token_clip(text, max_tokens=3200)
-    prompt = '{"task":"entities_by_type","rules":["dedupe"],"schema":{"people":[],"organizations":[],"products":[]}}\n' + text_clip
+    prompt = (
+        '{"task":"entities_by_type","rules":['
+        '"dedupe","from_transcript_only",'
+        '"include_fictional_npcs_and_factions",'
+        '"products_include_vehicles_weapons_tools",'
+        '"people_include_usernames_handles"],'
+        '"schema":{"people":[],"organizations":[],"products":[]}}\n' + text_clip
+    )
     ai = None
     for i in range(2):
         ai = _call_openai(
@@ -741,6 +786,7 @@ def entities_by_type(text: str) -> dict[str, List[str]]:
             presence_penalty=0.0,
             frequency_penalty=0.0,
             top_p=0.0,
+            response_format={"type": "json_object"},
         )
         if ai:
             break
