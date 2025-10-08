@@ -82,7 +82,9 @@ export default function VideoPage() {
               e instanceof Error ? e.message : "Failed to load transcript"
             )
           )
-          .finally(() => setLoadingTranscript(false));
+          .finally(() => {
+            if (!cancelled) setLoadingTranscript(false);
+          });
 
         fetch(`${base}/api/summary/${id}`, withKey())
           .then((r) => r.json())
@@ -90,7 +92,9 @@ export default function VideoPage() {
             if (cancelled) return;
             setSummary(sm.summary || "");
           })
-          .finally(() => setLoadingSummary(false));
+          .finally(() => {
+            if (!cancelled) setLoadingSummary(false);
+          });
 
         fetch(`${base}/api/chapters/${id}`, withKey())
           .then((r) => r.json())
@@ -98,7 +102,9 @@ export default function VideoPage() {
             if (cancelled) return;
             setChapters(ch.chapters || []);
           })
-          .finally(() => setLoadingChapters(false));
+          .finally(() => {
+            if (!cancelled) setLoadingChapters(false);
+          });
 
         fetch(`${base}/api/takeaways/${id}`, withKey())
           .then((r) => r.json())
@@ -106,7 +112,9 @@ export default function VideoPage() {
             if (cancelled) return;
             setTakeaways(tk.takeaways || []);
           })
-          .finally(() => setLoadingTakeaways(false));
+          .finally(() => {
+            if (!cancelled) setLoadingTakeaways(false);
+          });
 
         // Prefer categorized endpoint; fallback to flat
         fetch(`${base}/api/entities/by-type/${id}`, withKey())
@@ -130,7 +138,9 @@ export default function VideoPage() {
             if (cancelled) return;
             setEntities(en.entities || []);
           })
-          .finally(() => setLoadingEntities(false));
+          .finally(() => {
+            if (!cancelled) setLoadingEntities(false);
+          });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load data";
         setError(msg);
