@@ -17,10 +17,16 @@ export default function VideoPage() {
   const t = search.get("t");
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [summary, setSummary] = useState<string>("");
-  const [chapters, setChapters] = useState<{ title: string; start: number }[]>([]);
+  const [chapters, setChapters] = useState<{ title: string; start: number }[]>(
+    []
+  );
   const [takeaways, setTakeaways] = useState<string[]>([]);
   const [entities, setEntities] = useState<string[]>([]);
-  const [entitiesByType, setEntitiesByType] = useState<{ people: string[]; organizations: string[]; products: string[] } | null>(null);
+  const [entitiesByType, setEntitiesByType] = useState<{
+    people: string[];
+    organizations: string[];
+    products: string[];
+  } | null>(null);
   const [apiKey, setApiKey] = useState<string>("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prompt, setPrompt] = useState<string>("");
@@ -42,11 +48,14 @@ export default function VideoPage() {
     } catch {}
   }, []);
 
-  const withKey = useCallback((init?: RequestInit): RequestInit => {
-    const headers = new Headers(init?.headers || {});
-    if (apiKey) headers.set("X-OpenAI-Key", apiKey);
-    return { ...init, headers };
-  }, [apiKey]);
+  const withKey = useCallback(
+    (init?: RequestInit): RequestInit => {
+      const headers = new Headers(init?.headers || {});
+      if (apiKey) headers.set("X-OpenAI-Key", apiKey);
+      return { ...init, headers };
+    },
+    [apiKey]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +77,11 @@ export default function VideoPage() {
             setSegments(tr.segments || []);
             setError(null);
           })
-          .catch((e) => setError(e instanceof Error ? e.message : "Failed to load transcript"))
+          .catch((e) =>
+            setError(
+              e instanceof Error ? e.message : "Failed to load transcript"
+            )
+          )
           .finally(() => setLoadingTranscript(false));
 
         fetch(`${base}/api/summary/${id}`, withKey())
@@ -103,10 +116,16 @@ export default function VideoPage() {
           })
           .then((data) => {
             if (cancelled) return;
-            setEntitiesByType({ people: data.people || [], organizations: data.organizations || [], products: data.products || [] });
+            setEntitiesByType({
+              people: data.people || [],
+              organizations: data.organizations || [],
+              products: data.products || [],
+            });
           })
           .catch(async () => {
-            const en = await fetch(`${base}/api/entities/${id}`, withKey()).then((r) => r.json()).catch(() => null);
+            const en = await fetch(`${base}/api/entities/${id}`, withKey())
+              .then((r) => r.json())
+              .catch(() => null);
             if (!en) return;
             if (cancelled) return;
             setEntities(en.entities || []);
@@ -129,7 +148,10 @@ export default function VideoPage() {
     } catch {}
   }, [messages, sending]);
 
-  const baseApi = useMemo(() => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000", []);
+  const baseApi = useMemo(
+    () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
+    []
+  );
   const chatStorageKey = useMemo(() => `ytai_chat_${id}`, [id]);
 
   // Load saved chat for this video
@@ -151,52 +173,70 @@ export default function VideoPage() {
     } catch {}
   }, [messages, chatStorageKey]);
 
-  const ask = useCallback(async (q: string) => {
-    if (!q || sending) return;
-    const userMsg: ChatMessage = { role: "user", content: q };
-    setMessages((m) => [...m, userMsg]);
-    setPrompt("");
-    setSending(true);
-    try {
-      const init = withKey({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ video_id: id, messages: [...messages, userMsg] }),
-      });
-      const res = await fetch(`${baseApi}/api/chat`, init);
-      if (!res.ok) throw new Error(`Chat failed (${res.status})`);
-      const data = await res.json();
-      const assistant: ChatMessage = data?.message || { role: "assistant", content: "" };
-      setMessages((m) => [...m, assistant]);
-    } catch (e) {
-      const err = e instanceof Error ? e.message : "Something went wrong";
-      setMessages((m) => [...m, { role: "assistant", content: `Error: ${err}` }]);
-    } finally {
-      setSending(false);
-    }
-  }, [id, messages, sending, withKey, baseApi]);
+  const ask = useCallback(
+    async (q: string) => {
+      if (!q || sending) return;
+      const userMsg: ChatMessage = { role: "user", content: q };
+      setMessages((m) => [...m, userMsg]);
+      setPrompt("");
+      setSending(true);
+      try {
+        const init = withKey({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            video_id: id,
+            messages: [...messages, userMsg],
+          }),
+        });
+        const res = await fetch(`${baseApi}/api/chat`, init);
+        if (!res.ok) throw new Error(`Chat failed (${res.status})`);
+        const data = await res.json();
+        const assistant: ChatMessage = data?.message || {
+          role: "assistant",
+          content: "",
+        };
+        setMessages((m) => [...m, assistant]);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : "Something went wrong";
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", content: `Error: ${err}` },
+        ]);
+      } finally {
+        setSending(false);
+      }
+    },
+    [id, messages, sending, withKey, baseApi]
+  );
 
-  const onSubmit = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    const q = prompt.trim();
-    if (!q) return;
-    ask(q);
-  }, [prompt, ask]);
+  const onSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const q = prompt.trim();
+      if (!q) return;
+      ask(q);
+    },
+    [prompt, ask]
+  );
 
   // Client-side export helpers
-  const triggerDownload = useCallback((filename: string, content: string, mime: string = "text/plain") => {
-    try {
-      const blob = new Blob([content], { type: mime });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch {}
-  }, []);
+  const triggerDownload = useCallback(
+    (filename: string, content: string, mime: string = "text/plain") => {
+      try {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {}
+    },
+    []
+  );
 
   const buildChatTxt = useCallback(() => {
     const lines: string[] = [
@@ -210,7 +250,12 @@ export default function VideoPage() {
   const buildChatMd = useCallback(() => {
     const lines: string[] = ["# Chat Log", ""];
     messages.forEach((m) => {
-      const title = m.role === "user" ? "User" : m.role === "assistant" ? "Assistant" : "System";
+      const title =
+        m.role === "user"
+          ? "User"
+          : m.role === "assistant"
+          ? "Assistant"
+          : "System";
       lines.push(`### ${title}`);
       lines.push("");
       lines.push(m.content);
@@ -234,35 +279,51 @@ export default function VideoPage() {
     lines.push("");
     lines.push("Entities");
     if (entitiesByType) {
-      if (entitiesByType.people?.length) lines.push(`People: ${entitiesByType.people.join(", ")}`);
-      if (entitiesByType.organizations?.length) lines.push(`Organizations: ${entitiesByType.organizations.join(", ")}`);
-      if (entitiesByType.products?.length) lines.push(`Products: ${entitiesByType.products.join(", ")}`);
+      if (entitiesByType.people?.length)
+        lines.push(`People: ${entitiesByType.people.join(", ")}`);
+      if (entitiesByType.organizations?.length)
+        lines.push(`Organizations: ${entitiesByType.organizations.join(", ")}`);
+      if (entitiesByType.products?.length)
+        lines.push(`Products: ${entitiesByType.products.join(", ")}`);
     } else if (entities?.length) {
       lines.push(entities.join(", "));
     }
     lines.push("");
     lines.push("Chat Log");
-    messages.forEach((m) => lines.push(`${m.role.toUpperCase()}: ${m.content}`));
+    messages.forEach((m) =>
+      lines.push(`${m.role.toUpperCase()}: ${m.content}`)
+    );
     lines.push("");
     lines.push("Transcript");
     const fullText = segments.map((s) => s.text).join(" ");
     lines.push(fullText);
     return lines.join("\n");
-  }, [id, summary, chapters, takeaways, entitiesByType, entities, messages, segments]);
+  }, [
+    id,
+    summary,
+    chapters,
+    takeaways,
+    entitiesByType,
+    entities,
+    messages,
+    segments,
+  ]);
 
   useEffect(() => {
     if (t && playerRef.current) {
       try {
         const sec = parseFloat(t);
         if (!Number.isNaN(sec)) {
-          playerRef.current.src = `https://www.youtube.com/embed/${id}?start=${Math.floor(sec)}&autoplay=0`;
+          playerRef.current.src = `https://www.youtube.com/embed/${id}?start=${Math.floor(
+            sec
+          )}&autoplay=0`;
         }
       } catch {}
     }
   }, [t, id]);
 
   const miniToc = useMemo(() => {
-    return chapters.slice(0, 12);
+    return chapters; // show all chapters; container is scrollable
   }, [chapters]);
 
   function jumpTo(second: number) {
@@ -308,20 +369,43 @@ export default function VideoPage() {
                   Generating TL;DR…
                 </div>
               ) : (
-                <div className="prose prose-invert max-w-none whitespace-pre-wrap text-sm">{summary}</div>
+                <div className="prose prose-invert max-w-none whitespace-pre-wrap text-sm">
+                  {summary}
+                </div>
               )}
             </section>
 
             <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60">
-              <h2 className="text-lg font-semibold mb-2">Chat about this video</h2>
-              <div className="text-xs text-white/60 mb-3">Grounded to this video&apos;s transcript. {apiKey ? "Using your API key." : "Using shared limits; add your API key for better reliability."}</div>
+              <h2 className="text-lg font-semibold mb-2">
+                Chat about this video
+              </h2>
+              <div className="text-xs text-white/60 mb-3">
+                Grounded to this video&apos;s transcript.{" "}
+                {apiKey
+                  ? "Using your API key."
+                  : "Using shared limits; add your API key for better reliability."}
+              </div>
               <div className="overflow-y-auto rounded border border-white/10 bg-black/20 p-3 space-y-2 resize-y h-[200px] min-h-[200px]">
                 {messages.length === 0 ? (
-                  <div className="text-sm text-white/50">Ask anything about the content. Example: &quot;Summarize this video into 100 words&quot;.</div>
+                  <div className="text-sm text-white/50">
+                    Ask anything about the content. Example: &quot;Summarize
+                    this video into 100 words&quot;.
+                  </div>
                 ) : (
                   messages.map((m, i) => (
-                    <div key={i} className={m.role === "user" ? "text-sm" : "text-sm text-white/90"}>
-                      <div className={m.role === "user" ? "bg-blue-500/10 border border-blue-500/20 inline-block px-3 py-2 rounded" : "bg-white/5 border border-white/10 inline-block px-3 py-2 rounded prose prose-invert max-w-none text-sm"}>
+                    <div
+                      key={i}
+                      className={
+                        m.role === "user" ? "text-sm" : "text-sm text-white/90"
+                      }
+                    >
+                      <div
+                        className={
+                          m.role === "user"
+                            ? "bg-blue-500/10 border border-blue-500/20 inline-block px-3 py-2 rounded"
+                            : "bg-white/5 border border-white/10 inline-block px-3 py-2 rounded prose prose-invert max-w-none text-sm"
+                        }
+                      >
                         {m.role === "assistant" ? (
                           <ReactMarkdown>{m.content}</ReactMarkdown>
                         ) : (
@@ -407,7 +491,10 @@ export default function VideoPage() {
       <aside className="space-y-6">
         <section className="rounded-lg border border-white/10 p-4 bg-neutral-900/60 resize-y overflow-auto min-h-[140px]">
           <h3 className="text-base font-semibold mb-2">API Key (optional)</h3>
-          <p className="text-xs text-white/60 mb-2">Provide your own OpenAI API key to improve AI quality and avoid shared limits. Stored locally in your browser.</p>
+          <p className="text-xs text-white/60 mb-2">
+            Provide your own OpenAI API key to improve AI quality and avoid
+            shared limits. Stored locally in your browser.
+          </p>
           <input
             className="w-full rounded bg-black/30 border border-white/10 px-2 py-1 text-sm"
             type="password"
@@ -416,7 +503,9 @@ export default function VideoPage() {
             onChange={(e) => {
               const v = e.target.value.trim();
               setApiKey(v);
-              try { localStorage.setItem("ytai_openai_key", v); } catch {}
+              try {
+                localStorage.setItem("ytai_openai_key", v);
+              } catch {}
             }}
           />
         </section>
@@ -437,7 +526,9 @@ export default function VideoPage() {
                       className="text-blue-400 hover:underline w-full text-left grid grid-cols-[auto_1fr] items-start gap-2"
                       title={`Jump to ${toTime(c.start)}`}
                     >
-                      <span className="font-mono tabular-nums">{toTime(c.start)}</span>
+                      <span className="font-mono tabular-nums">
+                        {toTime(c.start)}
+                      </span>
                       <span>{c.title}</span>
                     </button>
                   </li>
@@ -476,31 +567,63 @@ export default function VideoPage() {
                     <div className="font-medium mb-1">People</div>
                     <ul className="list-disc pl-5 space-y-1">
                       {entitiesByType.people.map((e, i) => (
-                        <li key={i}><a className="hover:underline text-blue-400" href={`https://www.google.com/search?q=${encodeURIComponent(e)}`} target="_blank">{e}</a></li>
+                        <li key={i}>
+                          <a
+                            className="hover:underline text-blue-400"
+                            href={`https://www.google.com/search?q=${encodeURIComponent(
+                              e
+                            )}`}
+                            target="_blank"
+                          >
+                            {e}
+                          </a>
+                        </li>
                       ))}
                     </ul>
                   </div>
                 )}
-                {entitiesByType.organizations && entitiesByType.organizations.length > 0 && (
-                  <div>
-                    <div className="font-medium mb-1">Organizations</div>
-                    <ul className="list-disc pl-5 space-y-1">
-                      {entitiesByType.organizations.map((e, i) => (
-                        <li key={i}><a className="hover:underline text-blue-400" href={`https://www.google.com/search?q=${encodeURIComponent(e)}`} target="_blank">{e}</a></li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {entitiesByType.products && entitiesByType.products.length > 0 && (
-                  <div>
-                    <div className="font-medium mb-1">Products</div>
-                    <ul className="list-disc pl-5 space-y-1">
-                      {entitiesByType.products.map((e, i) => (
-                        <li key={i}><a className="hover:underline text-blue-400" href={`https://www.google.com/search?q=${encodeURIComponent(e)}`} target="_blank">{e}</a></li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {entitiesByType.organizations &&
+                  entitiesByType.organizations.length > 0 && (
+                    <div>
+                      <div className="font-medium mb-1">Organizations</div>
+                      <ul className="list-disc pl-5 space-y-1">
+                        {entitiesByType.organizations.map((e, i) => (
+                          <li key={i}>
+                            <a
+                              className="hover:underline text-blue-400"
+                              href={`https://www.google.com/search?q=${encodeURIComponent(
+                                e
+                              )}`}
+                              target="_blank"
+                            >
+                              {e}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                {entitiesByType.products &&
+                  entitiesByType.products.length > 0 && (
+                    <div>
+                      <div className="font-medium mb-1">Products</div>
+                      <ul className="list-disc pl-5 space-y-1">
+                        {entitiesByType.products.map((e, i) => (
+                          <li key={i}>
+                            <a
+                              className="hover:underline text-blue-400"
+                              href={`https://www.google.com/search?q=${encodeURIComponent(
+                                e
+                              )}`}
+                              target="_blank"
+                            >
+                              {e}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
               </div>
             ) : (
               <div className="flex flex-wrap gap-2 max-h-[50vh] overflow-auto">
@@ -508,7 +631,9 @@ export default function VideoPage() {
                   <a
                     key={i}
                     className="text-xs rounded-full border border-white/10 px-2 py-1 hover:bg-white/5"
-                    href={`https://www.google.com/search?q=${encodeURIComponent(e)}`}
+                    href={`https://www.google.com/search?q=${encodeURIComponent(
+                      e
+                    )}`}
                     target="_blank"
                   >
                     {e}
@@ -526,7 +651,13 @@ export default function VideoPage() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     className="underline"
-                    onClick={() => triggerDownload(`${id}-full.txt`, buildFullTxt(), "text/plain")}
+                    onClick={() =>
+                      triggerDownload(
+                        `${id}-full.txt`,
+                        buildFullTxt(),
+                        "text/plain"
+                      )
+                    }
                   >
                     txt
                   </button>
@@ -542,10 +673,34 @@ export default function VideoPage() {
               <div>
                 <div className="font-medium mb-1">Transcript</div>
                 <div className="flex flex-wrap gap-2">
-                  <a className="underline" href={`${baseApi}/api/export/txt/${id}`} download={`${id}.txt`}>txt</a>
-                  <a className="underline" href={`${baseApi}/api/export/srt/${id}`} download={`${id}.srt`}>srt</a>
-                  <a className="underline" href={`${baseApi}/api/export/vtt/${id}`} download={`${id}.vtt`}>vtt</a>
-                  <a className="underline" href={`${baseApi}/api/export/transcript/json/${id}`} download={`${id}-transcript.json`}>json</a>
+                  <a
+                    className="underline"
+                    href={`${baseApi}/api/export/txt/${id}`}
+                    download={`${id}.txt`}
+                  >
+                    txt
+                  </a>
+                  <a
+                    className="underline"
+                    href={`${baseApi}/api/export/srt/${id}`}
+                    download={`${id}.srt`}
+                  >
+                    srt
+                  </a>
+                  <a
+                    className="underline"
+                    href={`${baseApi}/api/export/vtt/${id}`}
+                    download={`${id}.vtt`}
+                  >
+                    vtt
+                  </a>
+                  <a
+                    className="underline"
+                    href={`${baseApi}/api/export/transcript/json/${id}`}
+                    download={`${id}-transcript.json`}
+                  >
+                    json
+                  </a>
                 </div>
               </div>
               <div>
@@ -553,13 +708,25 @@ export default function VideoPage() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     className="underline"
-                    onClick={() => triggerDownload(`${id}-chat.txt`, buildChatTxt(), "text/plain")}
+                    onClick={() =>
+                      triggerDownload(
+                        `${id}-chat.txt`,
+                        buildChatTxt(),
+                        "text/plain"
+                      )
+                    }
                   >
                     txt
                   </button>
                   <button
                     className="underline"
-                    onClick={() => triggerDownload(`${id}-chat.md`, buildChatMd(), "text/markdown")}
+                    onClick={() =>
+                      triggerDownload(
+                        `${id}-chat.md`,
+                        buildChatMd(),
+                        "text/markdown"
+                      )
+                    }
                   >
                     markdown
                   </button>
@@ -572,5 +739,3 @@ export default function VideoPage() {
     </div>
   );
 }
-
-
