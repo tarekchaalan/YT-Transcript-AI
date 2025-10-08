@@ -4,6 +4,12 @@ import os
 import contextvars
 import re
 from typing import List, Optional
+import json
+import hashlib
+from typing import Callable, Any
+import time
+import math
+import collections
 
 import yake
 
@@ -25,7 +31,27 @@ def _effective_openai_key() -> Optional[str]:
     return override or OPENAI_API_KEY
 
 
-def _call_openai(prompt: str, system: str = "You are a helpful assistant.") -> Optional[str]:
+def _log_ai_event(event: str, details: dict[str, Any]) -> None:
+    """Lightweight logging controlled by env LOG_AI=1."""
+    try:
+        if os.environ.get("LOG_AI") != "1":
+            return
+        safe_details = {k: v for k, v in details.items() if k not in {"prompt"}}
+        print(f"[AI] {event} | {json.dumps(safe_details, ensure_ascii=False)}")
+    except Exception:
+        pass
+
+
+def _call_openai(
+    prompt: str,
+    system: str = "You are a helpful assistant.",
+    *,
+    temperature: float = 0.2,
+    max_tokens: Optional[int] = None,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.0,
+    top_p: float = 0.0,
+) -> Optional[str]:
     key = _effective_openai_key()
     if not key:
         return None
@@ -33,15 +59,53 @@ def _call_openai(prompt: str, system: str = "You are a helpful assistant.") -> O
         # Create a short-lived client with the effective key to avoid cross-request leakage
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=key)
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        prompt_bytes = len(prompt.encode("utf-8", errors="ignore"))
+        system_bytes = len(system.encode("utf-8", errors="ignore"))
+        prompt_hash = hashlib.sha256((system + "\n" + prompt).encode("utf-8", errors="ignore")).hexdigest()
+        t0 = time.time()
         resp = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+            model=model,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.2,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            top_p=top_p,
         )
-        return resp.choices[0].message.content  # type: ignore[return-value]
+        out = resp.choices[0].message.content  # type: ignore[assignment]
+        try:
+            finish_reason = getattr(resp.choices[0], "finish_reason", None)
+        except Exception:
+            finish_reason = None
+        # Check if any reasoning-like field exists without logging content
+        reasoning_present = False
+        try:
+            ch0 = resp.choices[0]
+            reasoning_present = bool(
+                getattr(getattr(ch0, "message", object()), "reasoning", None)
+                or getattr(ch0, "logprobs", None)
+            )
+        except Exception:
+            reasoning_present = False
+        dt = int((time.time() - t0) * 1000)
+        response_bytes = len((out or "").encode("utf-8", errors="ignore"))
+        _log_ai_event(
+            "openai_call",
+            {
+                "model": model,
+                "prompt_bytes": prompt_bytes + system_bytes,
+                "response_bytes": response_bytes,
+                "latency_ms": dt,
+                "finish_reason": finish_reason,
+                "prompt_hash": prompt_hash,
+                "reasoning_present": reasoning_present,
+            },
+        )
+        return out  # type: ignore[return-value]
     except Exception:
         return None
 
@@ -61,15 +125,120 @@ def override_openai_key_for_request(key: Optional[str]):
     return _ctx()
 
 
+def _token_clip(text: str, max_tokens: int, model_hint: str = "gpt-4o-mini") -> str:
+    """Clip text by tokens using tiktoken if available; fallback to rough char heuristic."""
+    try:
+        import tiktoken  # type: ignore
+        try:
+            enc = tiktoken.encoding_for_model(model_hint)
+        except Exception:
+            enc = tiktoken.get_encoding("cl100k_base")
+        tokens = enc.encode(text)
+        if len(tokens) <= max_tokens:
+            return text
+        clipped = enc.decode(tokens[:max_tokens])
+        return clipped
+    except Exception:
+        # Rough heuristic ~4 chars per token
+        approx_chars = max_tokens * 4
+        return text[:approx_chars]
+
+
+def _sanitize_title(title: str, max_len: int = 60) -> str:
+    # Remove numbering/bullets and collapse whitespace; strip trailing punctuation
+    t = title.strip().lstrip("•-–—0123456789. )(").strip()
+    t = t.strip("\"'”’“‘")
+    t = re.sub(r"\s+", " ", t)
+    t = re.sub(r"[\s\-–—]*[\.;:!,]+$", "", t).strip()
+    if len(t) > max_len:
+        t = t[:max_len].rstrip()
+    return t
+
+
+def _safe_json(s: str) -> Optional[dict]:
+    """Try to parse JSON object. If whole string fails, attempt largest balanced JSON object.
+
+    Returns dict if successful, else None.
+    """
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        pass
+    # Balanced brace scan respecting strings/escapes
+    best_span: tuple[int, int] | None = None
+    in_str = False
+    escape = False
+    depth = 0
+    start_idx = -1
+    for i, ch in enumerate(s):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        else:
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                if depth == 0:
+                    start_idx = i
+                depth += 1
+            elif ch == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start_idx >= 0:
+                        # Candidate complete JSON object
+                        span = (start_idx, i + 1)
+                        if best_span is None or (span[1] - span[0]) > (best_span[1] - best_span[0]):
+                            best_span = span
+    if best_span:
+        chunk = s[best_span[0]:best_span[1]]
+        try:
+            parsed2 = json.loads(chunk)
+            return parsed2 if isinstance(parsed2, dict) else None
+        except Exception:
+            return None
+    return None
+
+
+_YAKE_CACHE_CAP = 256
+_yake_cache: "collections.OrderedDict[str, List[tuple[str, float]]]" = collections.OrderedDict()
+
+
+def _detect_lang(text: str) -> str:
+    try:
+        from langdetect import detect  # type: ignore
+        return detect(text)
+    except Exception:
+        return "en"
+
+
 def extract_keyphrases(text: str, max_phrases: int = 12) -> List[str]:
-    kw = yake.KeywordExtractor(
-        top=max_phrases * 2,  # Get more candidates
-        n=3,  # Up to 3-word phrases
-        stopwords=None,  # Use default English stopwords
-        dedupLim=0.7,  # Remove near-duplicates
-        windowsSize=2
-    )
-    candidates = kw.extract_keywords(text)
+    # Cache by text hash and parameters
+    h = hashlib.sha256((text + f"|{max_phrases}").encode("utf-8", errors="ignore")).hexdigest()
+    if h in _yake_cache:
+        candidates = _yake_cache.pop(h)
+        _yake_cache[h] = candidates  # move to end (recent)
+    else:
+        lang = os.environ.get("YAKE_LANG") or _detect_lang(text)
+        window = int(os.environ.get("YAKE_WINDOW", "3"))
+        kw = yake.KeywordExtractor(
+            lan=lang,
+            top=max_phrases * 2,
+            n=3,  # Up to 3-word phrases
+            stopwords=None,
+            dedupLim=0.7,
+            windowsSize=max(3, min(4, window)),
+        )
+        candidates = kw.extract_keywords(text)
+        _yake_cache[h] = candidates
+        if len(_yake_cache) > _YAKE_CACHE_CAP:
+            _yake_cache.popitem(last=False)
 
     # Filter and clean phrases
     cleaned = []
@@ -89,12 +258,22 @@ def extract_keyphrases(text: str, max_phrases: int = 12) -> List[str]:
 
 
 def summarize(text: str) -> str:
+    text_clip = _token_clip(text, max_tokens=3500)
     prompt = (
-        "Summarize the following transcript in 5-8 concise bullet points. \n" + text[:16000]
+        "Summarize in 5–8 bullets, 12–22 words each, no sub-bullets:\n" + text_clip
     )
-    ai = _call_openai(prompt, system="Expert concise summarizer")
+    ai = _call_openai(
+        prompt,
+        system="Return ONLY bullets starting with '-'",
+        max_tokens=500,
+        presence_penalty=0.0,
+        frequency_penalty=0.0,
+    )
     if ai:
-        return ai
+        # Enforce bullet-only output by regex filtering
+        lines = [l for l in ai.splitlines() if l.strip().startswith("-")]
+        if 5 <= len(lines) <= 8:
+            return "\n".join(lines)
 
     # Better fallback: extract sentences and create summary
     sentences = re.split(r'[.!?]+', text)
@@ -130,23 +309,67 @@ def summarize(text: str) -> str:
 
 
 def chapters(text: str, duration: float | None = None) -> List[tuple[str, float]]:
-    prompt = (
-        "Create 5-10 chapter titles with start times in seconds as 'title|start'. "
-        "Only output one per line. Transcript:"\
-        + text[:16000]
-    )
-    ai = _call_openai(prompt, system="You generate chapter outlines with timestamps")
+    text_clip = _token_clip(text, max_tokens=3500)
+    # Ask for JSON first
+    system = 'Return ONLY JSON: {"chapters":[{"title":"...","start":0},...]}'
+    user = '{"task":"chapters","rules":["strict","int_seconds"]}\nTranscript:\n' + text_clip
+
+    ai = None
+    for i in range(2):
+        ai = _call_openai(
+            user,
+            system=system,
+            max_tokens=600,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            top_p=0.0,
+        )
+        if ai:
+            break
+        time.sleep(0.5 * (2 ** i))
+    items: List[tuple[str, float]] = []
+    parse_ok = False
     if ai:
-        items = []
-        for line in ai.splitlines():
-            if "|" in line:
-                t, s = line.split("|", 1)
-                try:
-                    items.append((t.strip("- •"), float(s.strip())))
-                except Exception:
-                    continue
-        if items:
-            return items
+        data = _safe_json(ai)
+        if data is not None:
+            try:
+                for c in data.get("chapters", []) or []:
+                    title = _sanitize_title(str(c.get("title", "")))
+                    start = float(int(c.get("start", 0)))
+                    if title:
+                        items.append((title, start))
+                parse_ok = len(items) > 0
+            except Exception:
+                parse_ok = False
+    if not parse_ok:
+        # Retry once with harsher system
+        ai2 = None
+        for i in range(2):
+            ai2 = _call_openai(
+                user,
+                system='Return ONLY JSON: {"chapters": []}. If format would be wrong, output exactly {"chapters": []}',
+                max_tokens=400,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                top_p=0.0,
+            )
+            if ai2:
+                break
+            time.sleep(0.5 * (2 ** i))
+        if ai2:
+            try:
+                data2 = _safe_json(ai2)
+                if data2 is not None:
+                    for c in data2.get("chapters", []) or []:
+                        title = _sanitize_title(str(c.get("title", "")))
+                        start = float(int(c.get("start", 0)))
+                        if title:
+                            items.append((title, start))
+                    parse_ok = len(items) > 0
+            except Exception:
+                parse_ok = False
+    if items:
+        return _postprocess_chapters(items, duration)
     # fallback: evenly spaced chapters titled by keyphrases
     num = 8
     if duration and duration > 0:
@@ -166,7 +389,7 @@ def _format_ts_vtt(seconds: float) -> str:
 
 def _postprocess_chapters(items: List[tuple[str, float]], duration: float | None) -> List[tuple[str, float]]:
     # Clamp, sort, dedupe, and enforce increasing with a min-gap
-    min_gap = 20.0  # seconds
+    min_gap = max(10.0, (duration or 0) / 80.0)
     out: List[tuple[str, float]] = []
     # Normalize
     norm: List[tuple[str, float]] = []
@@ -217,6 +440,7 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
     # Build compact VTT (truncate to avoid token limits)
     vtt_lines: List[str] = ["WEBVTT", ""]
     total = 0
+    cue_starts: List[float] = []
     for seg in segments:
         try:
             start = float(getattr(seg, "start"))
@@ -229,29 +453,155 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
         vtt_lines.append(f"{_format_ts_vtt(start)} --> {_format_ts_vtt(end)}")
         vtt_lines.append(text)
         vtt_lines.append("")
+        cue_starts.append(start)
         total += len(text)
         if total > 16000:
             break
     vtt_blob = "\n".join(vtt_lines)
 
-    dur_note = f" The video duration is approximately {int(duration)} seconds; do not output any start beyond this." if duration else ""
-    prompt = (
-        "Given the following VTT captions with timestamps, create 5-10 chapter titles with precise start times in seconds.\n"
-        "Rules: times must be strictly increasing, within video bounds, and reflect when the topic begins." + dur_note + "\n"
-        "Return one chapter per line strictly as 'title|start_seconds'.\n\n" + vtt_blob
+    # Prepare allowed (rounded) cue start seconds for post-validation/snap
+    import bisect
+    rounded_cue_starts = sorted({int(round(s)) for s in cue_starts if s >= 0})
+    if not rounded_cue_starts:
+        # Fallback to text-based
+        text = " ".join(getattr(seg, "text", "") for seg in segments)
+        fallback_duration = float(getattr(segments[-1], "end", 0.0)) if segments else duration
+        return chapters(text, fallback_duration)
+
+    # Build strict prompt/system
+    system_msg = (
+        "Return ONLY JSON: {\"chapters\":[{\"title\":\"...\",\"start\":0},...]}"
     )
-    ai = _call_openai(prompt, system="You generate chapter outlines with timestamps grounded to VTT timing")
+    dur_note = (
+        f"\n- Video duration (seconds): {int(duration)}. All start_seconds MUST be integers in [0, duration)."
+        if duration is not None else ""
+    )
+    cue_seconds_full = sorted({int(round(s)) for s in cue_starts if s >= 0})
+    # Downsample cue list if too large
+    if len(cue_seconds_full) > 3000:
+        n = max(2, len(cue_seconds_full) // 1500)
+        down = cue_seconds_full[::n]
+        # ensure boundaries included
+        if down and cue_seconds_full[0] != down[0]:
+            down = [cue_seconds_full[0]] + down
+        if down and cue_seconds_full[-1] != down[-1]:
+            down = down + [cue_seconds_full[-1]]
+        cue_seconds_list = down
+    else:
+        cue_seconds_list = cue_seconds_full
+    prompt = (
+        '{"task":"chapters","rules":["strict","int_seconds"],"allowed_start_seconds":' + json.dumps(cue_seconds_list) + "}\n"
+        "WEBVTT:\n" + vtt_blob
+    )
+
+    ai = None
+    for i in range(2):
+        ai = _call_openai(
+            prompt,
+            system=system_msg,
+            max_tokens=800,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            top_p=0.0,
+        )
+        if ai:
+            break
+        time.sleep(0.5 * (2 ** i))
+
+    def _snap_to_cue_seconds(x: int) -> int | None:
+        # Snap to the nearest allowed cue start at or after x; if none, snap to the last allowed < duration.
+        idx = bisect.bisect_left(rounded_cue_starts, x)
+        if idx < len(rounded_cue_starts):
+            return rounded_cue_starts[idx]
+        return rounded_cue_starts[-1] if rounded_cue_starts else None
+
     if ai:
         items: List[tuple[str, float]] = []
-        for line in ai.splitlines():
-            if "|" not in line:
-                continue
-            t, s = line.split("|", 1)
-            try:
-                items.append((t.strip("- •"), float(s.strip())))
-            except Exception:
-                continue
-        if items:
+        try:
+            m = re.search(r"\{.*\}", ai, re.S)
+            if m:
+                data = json.loads(m.group(0))
+                chapters_json = data.get("chapters", []) or []
+                used_seconds: set[int] = set()
+                last_start: int | None = None
+                for c in chapters_json:
+                    raw_title = str(c.get("title", ""))
+                    title = _sanitize_title(raw_title)
+                    try:
+                        sec_int = int(c.get("start", 0))
+                    except Exception:
+                        continue
+                    snapped = _snap_to_cue_seconds(sec_int)
+                    if snapped is None:
+                        continue
+                    if duration is not None and snapped >= int(duration):
+                        continue
+                    if last_start is not None and snapped <= last_start:
+                        next_idx = bisect.bisect_right(rounded_cue_starts, last_start)
+                        if next_idx >= len(rounded_cue_starts):
+                            continue
+                        snapped = rounded_cue_starts[next_idx]
+                    if snapped in used_seconds:
+                        continue
+                    items.append((title, float(snapped)))
+                    used_seconds.add(snapped)
+                    last_start = snapped
+                    if len(items) >= 10:
+                        break
+        except Exception:
+            items = []
+        if 5 <= len(items) <= 10:
+            return _postprocess_chapters(items, duration)
+        # Retry once with harsher system if parse failed or count out of bounds
+        ai2 = None
+        for i in range(2):
+            ai2 = _call_openai(
+                prompt,
+                system='Return ONLY JSON: {"chapters": []}. If format invalid, output exactly {"chapters": []}',
+                max_tokens=500,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                top_p=0.0,
+            )
+            if ai2:
+                break
+            time.sleep(0.5 * (2 ** i))
+        items = []
+        try:
+            if ai2:
+                m2 = re.search(r"\{.*\}", ai2, re.S)
+                if m2:
+                    data2 = json.loads(m2.group(0))
+                    chapters_json2 = data2.get("chapters", []) or []
+                    used_seconds2: set[int] = set()
+                    last_start2: int | None = None
+                    for c in chapters_json2:
+                        raw_title2 = str(c.get("title", ""))
+                        title2 = _sanitize_title(raw_title2)
+                        try:
+                            sec_int2 = int(c.get("start", 0))
+                        except Exception:
+                            continue
+                        snapped2 = _snap_to_cue_seconds(sec_int2)
+                        if snapped2 is None:
+                            continue
+                        if duration is not None and snapped2 >= int(duration):
+                            continue
+                        if last_start2 is not None and snapped2 <= last_start2:
+                            next_idx2 = bisect.bisect_right(rounded_cue_starts, last_start2)
+                            if next_idx2 >= len(rounded_cue_starts):
+                                continue
+                            snapped2 = rounded_cue_starts[next_idx2]
+                        if snapped2 in used_seconds2:
+                            continue
+                        items.append((title2, float(snapped2)))
+                        used_seconds2.add(snapped2)
+                        last_start2 = snapped2
+                        if len(items) >= 10:
+                            break
+        except Exception:
+            items = []
+        if 5 <= len(items) <= 10:
             return _postprocess_chapters(items, duration)
 
     # Fallback to text-based
@@ -260,11 +610,54 @@ def chapters_from_segments(segments: List[object], duration: float | None = None
     return chapters(text, fallback_duration)
 
 def takeaways(text: str) -> List[str]:
-    prompt = "List the 5-10 most important actionable takeaways from the transcript." + text[:16000]
-    ai = _call_openai(prompt, system="You produce crisp, numbered takeaways")
+    text_clip = _token_clip(text, max_tokens=3000)
+    system = 'Return ONLY JSON: {"takeaways":["...", "..."]}'
+    user = '{"task":"takeaways","rules":["concise","actionable","5-10"]}\n' + text_clip
+    ai = None
+    for i in range(2):
+        ai = _call_openai(
+            user,
+            system=system,
+            max_tokens=400,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            top_p=0.0,
+        )
+        if ai:
+            break
+        time.sleep(0.5 * (2 ** i))
     if ai:
-        lines = [re.sub(r"^[-*\d.\)\s]+", "", l).strip() for l in ai.splitlines() if l.strip()]
-        return [l for l in lines if l]
+        try:
+            data = _safe_json(ai)
+            if data is not None:
+                out = [re.sub(r"\s+", " ", str(x)).strip() for x in (data.get("takeaways", []) or [])]
+                return [x for x in out if x]
+        except Exception:
+            pass
+        # Retry with harsher system
+        ai2 = None
+        for i in range(2):
+            ai2 = _call_openai(
+                user,
+                system='Return ONLY JSON: {"takeaways": []}. If format invalid, output exactly {"takeaways": []}',
+                max_tokens=300,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                top_p=0.0,
+            )
+            if ai2:
+                break
+            time.sleep(0.5 * (2 ** i))
+        if ai2:
+            try:
+                data2 = _safe_json(ai2)
+                if data2 is not None:
+                    out2 = [re.sub(r"\s+", " ", str(x)).strip() for x in (data2.get("takeaways", []) or [])]
+                    clean = [x for x in out2 if x]
+                    if clean:
+                        return clean
+            except Exception:
+                pass
     return [p.capitalize() for p in extract_keyphrases(text, 8)]
 
 
@@ -289,19 +682,37 @@ def answer(text: str, question: str) -> str:
 
 
 def entities(text: str) -> List[str]:
-    prompt = "Extract and deduplicate named entities (people, orgs, products) as a list." + text[:16000]
-    ai = _call_openai(prompt, system="Entity extraction and deduplication")
+    text_clip = _token_clip(text, max_tokens=3200)
+    system = 'Return ONLY JSON: {"entities":["...", "..."]}'
+    user = '{"task":"entities","rules":["dedupe","flat-list"]}\n' + text_clip
+    ai = None
+    for i in range(2):
+        ai = _call_openai(
+            user,
+            system=system,
+            max_tokens=500,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            top_p=0.0,
+        )
+        if ai:
+            break
+        time.sleep(0.5 * (2 ** i))
     if ai:
-        items = [re.sub(r"^[-*\d.\)\s]+", "", l).strip() for l in ai.splitlines() if l.strip()]
-        items = [re.sub(r"\s+", " ", i) for i in items]
-        seen = set()
-        out = []
-        for i in items:
-            k = i.lower()
-            if k not in seen:
-                seen.add(k)
-                out.append(i)
-        return out
+        try:
+            data = _safe_json(ai)
+            if data is not None:
+                items = [re.sub(r"\s+", " ", str(i)).strip() for i in (data.get("entities", []) or [])]
+                seen = set()
+                out = []
+                for i in items:
+                    k = i.lower()
+                    if k and k not in seen:
+                        seen.add(k)
+                        out.append(i)
+                return out
+        except Exception:
+            pass
     # fallback: heuristic proper-noun detection
     candidates = re.findall(r"\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,3})\b", text)
     uniq = []
@@ -319,28 +730,33 @@ def entities_by_type(text: str) -> dict[str, List[str]]:
 
     Tries OpenAI first; falls back to heuristic categorization.
     """
-    prompt = (
-        "Extract named entities from the transcript and categorize into People, Organizations, Products.\n"
-        "Return as lines in the form 'People: name1; name2' etc.\n"
-        + text[:16000]
-    )
-    ai = _call_openai(prompt, system="You extract entities and categorize them clearly")
+    text_clip = _token_clip(text, max_tokens=3200)
+    prompt = '{"task":"entities_by_type","rules":["dedupe"],"schema":{"people":[],"organizations":[],"products":[]}}\n' + text_clip
+    ai = None
+    for i in range(2):
+        ai = _call_openai(
+            prompt,
+            system='Return ONLY JSON: {"people":[],"organizations":[],"products":[]}',
+            max_tokens=600,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            top_p=0.0,
+        )
+        if ai:
+            break
+        time.sleep(0.5 * (2 ** i))
     people: List[str] = []
     orgs: List[str] = []
     products: List[str] = []
     if ai:
         try:
-            for line in ai.splitlines():
-                if ":" not in line:
-                    continue
-                k, v = line.split(":", 1)
-                items = [re.sub(r"\s+", " ", i).strip(" -•") for i in re.split(r"[,;]", v) if i.strip()]
-                if k.strip().lower().startswith("people"):
-                    people.extend(items)
-                elif k.strip().lower().startswith("org"):
-                    orgs.extend(items)
-                elif k.strip().lower().startswith("prod"):
-                    products.extend(items)
+            data = _safe_json(ai)
+            if data is not None:
+                def _norm_list(x: Any) -> List[str]:
+                    return [re.sub(r"\s+", " ", str(i)).strip(" -•") for i in (x or []) if str(i).strip()]
+                people.extend(_norm_list(data.get("people")))
+                orgs.extend(_norm_list(data.get("organizations")))
+                products.extend(_norm_list(data.get("products")))
         except Exception:
             pass
     if not (people or orgs or products):
@@ -387,11 +803,9 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
     """
     key = _effective_openai_key()
     system = (
-        "You are a helpful assistant. You MUST answer ONLY using the provided transcript content. "
-        "If the user's request is unrelated to the transcript, you MUST refuse with a brief message like: "
-        "'I can't help with that — your question isn't about this video's content.' "
-        "Do not produce code or instructions unrelated to the transcript. Be concise. "
-        "Always format your response as Markdown (use headings, paragraphs, and numbered/bulleted lists)."
+        "You are a helpful assistant. Answer using ONLY the content between <TRANSCRIPT> and </TRANSCRIPT>. "
+        "If the user's question seems unrelated or cannot be answered strictly from the transcript, reply with: "
+        "'I can't help with that — your question isn't about this video's content.'"
     )
     # If no key is available, provide a graceful fallback using QA on last user message.
     user_prompt = ""
@@ -423,12 +837,17 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
         from openai import OpenAI  # type: ignore
         client = OpenAI(api_key=key)
         chat_messages = [{"role": "system", "content": system}]
-        chat_messages.append({"role": "system", "content": "Transcript (truncated):\n" + text[:max_chars]})
-        chat_messages.extend(messages[-10:])  # bound history to last 10 (after transcript/system)
+        # Put transcript in a user message with clear delimiters
+        transcript_clip = _token_clip(text, max_tokens=3500)
+        chat_messages.append({"role": "user", "content": f"<TRANSCRIPT>\n{transcript_clip}\n</TRANSCRIPT>"})
+        chat_messages.extend(messages[-10:])  # bound history to last 10 (after transcript)
         resp = client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             messages=chat_messages,  # type: ignore[arg-type]
             temperature=0.2,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            max_tokens=800,
         )
         out = resp.choices[0].message.content  # type: ignore[assignment]
         return out or ""
