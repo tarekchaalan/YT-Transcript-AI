@@ -859,22 +859,31 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
         if m.get("role") == "user":
             user_prompt = m.get("content", "")
             break
-    # Strict on-topic guard: refuse if the user question appears unrelated to the transcript
-    def _is_on_topic(body: str, question: str) -> bool:
+    # On-topic guard: permissive by default, configurable via env ON_TOPIC_GUARD (off|loose|strict)
+    def _is_on_topic(body: str, question: str, mode: str = "loose") -> bool:
+        q_lower = question.lower()
         try:
             phrases = set(p.lower() for p in extract_keyphrases(body, 12))
         except Exception:
             phrases = set()
-        q = question.lower()
-        if any(p and p in q for p in phrases):
+        # Phrase inclusion is strong signal of on-topic
+        if any(p and p in q_lower for p in phrases):
             return True
-        # fallback: simple overlap on 4+ letter words
-        q_words = set(w for w in re.findall(r"[a-zA-Z]{4,}", q))
-        t_words = set(w for w in re.findall(r"[a-zA-Z]{4,}", body.lower())[:5000])
-        return len(q_words & t_words) >= 2
+        # Token overlap heuristic (more permissive in loose mode)
+        q_words = set(re.findall(r"[a-zA-Z]{3,}", q_lower))
+        t_word_list = re.findall(r"[a-zA-Z]{3,}", body.lower())
+        t_words = set(t_word_list[:8000])
+        overlap = len(q_words & t_words)
+        if mode == "strict":
+            return overlap >= 2
+        # loose/default: allow if there is any overlap or the question is very short
+        return overlap >= 1 or len(q_words) <= 3
 
-    if user_prompt and not _is_on_topic(text, user_prompt):
-        return "I can't help with that — your question isn't about this video's content."
+    guard_mode = os.environ.get("ON_TOPIC_GUARD", "loose").lower()
+    if user_prompt and guard_mode != "off" and not _is_on_topic(text, user_prompt, guard_mode):
+        # Only refuse if clearly off-topic and the question is sufficiently long to judge
+        if len(re.findall(r"[a-zA-Z]{3,}", user_prompt)) >= 6:
+            return "I can't help with that — your question isn't about this video's content."
 
     if not key:
         return answer(text, user_prompt) if user_prompt else "I don't know."
