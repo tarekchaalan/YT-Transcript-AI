@@ -849,9 +849,7 @@ def grounded_chat(text: str, messages: List[dict[str, str]], max_chars: int = 16
     """
     key = _effective_openai_key()
     system = (
-        "You are a helpful assistant. Answer using ONLY the content between <TRANSCRIPT> and </TRANSCRIPT>. "
-        "If the answer cannot be found strictly within the transcript, reply with: "
-        "'I don't know.'"
+        "You are a helpful assistant. Answer using ONLY the thing related to the video, between <TRANSCRIPT> and </TRANSCRIPT>. "
     )
     # If no key is available, provide a graceful fallback using QA on last user message.
     user_prompt = ""
