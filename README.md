@@ -5,7 +5,7 @@
 
 <img src="./frontend/src/assets/LogoLong.png" width="35%" style="display: block; margin: 0 auto;" alt="Project Logo"/>
 
-# YT-TRANSCRIPT-AI
+# YT-AI
 
 <em>Unlock AI insights from YouTube transcripts effortlessly.<em>
 
