@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Logo from "@/assets/Logo.png";
 import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -16,6 +17,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Youtube AI",
   description: "Turn your YouTube videos into AI-powered summaries, chapters, and more.",
+  icons: {
+    icon: [{ url: (Logo as unknown as { src: string }).src }],
+    shortcut: [{ url: (Logo as unknown as { src: string }).src }],
+    apple: [{ url: (Logo as unknown as { src: string }).src }],
+  },
 };
 
 export default function RootLayout({
